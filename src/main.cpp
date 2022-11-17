@@ -5,12 +5,12 @@
 
   g++ -std=c++17 -o cpp_program src/main.cpp \
       -I .. -I target/cxxbridge \
-      -L target/debug -l cpprust \
+      -L target/debug -l arustlib \
       -pthread -l dl
 */
 
 // consider the ffi part of Rust code
-#include "src/lib.rs.h"
+#include "arustlib/src/lib.rs.h"
 
 #include <iostream>
 
