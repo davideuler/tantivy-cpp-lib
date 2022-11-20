@@ -1,10 +1,13 @@
 #[macro_use]
 extern crate tantivy;
+use tantivy::Directory;
 use tantivy::collector::TopDocs;
 use tantivy::query::QueryParser;
 use tantivy::schema::*;
 use tantivy::Index;
 use tantivy::ReloadPolicy;
+
+use tantivy::directory::MmapDirectory;
 
 
 fn main() -> tantivy::Result<()> {
@@ -18,7 +21,10 @@ fn main() -> tantivy::Result<()> {
 
     let schema = schema_builder.build();
 
-    let index = Index::create_in_dir(&index_path, schema.clone())?;
+    // let index = Index::create_in_dir(&index_path, schema.clone())?;
+
+    let mmap_directory = MmapDirectory::open(index_path)?;
+    let index = Index::open_or_create(mmap_directory, schema.clone())?;
     let mut index_writer = index.writer(50_000_000)?;
  
     let title = schema.get_field("title").unwrap();
@@ -32,10 +38,8 @@ fn main() -> tantivy::Result<()> {
          he had gone eighty-four days now without taking a fish.",
     );
 
- 
     index_writer.add_document(old_man_doc);
 
- 
     index_writer.add_document(doc!(
     title => "Of Mice and Men",
     body => "A few miles south of Soledad, the Salinas River drops in close to the hillside \
