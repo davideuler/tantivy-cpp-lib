@@ -5,7 +5,6 @@ use tantivy::query::QueryParser;
 use tantivy::schema::*;
 use tantivy::Index;
 use tantivy::ReloadPolicy;
-use tantivy::IndexReader;
 use tantivy::IndexWriter;
 use tantivy::directory::MmapDirectory;
 
@@ -23,7 +22,7 @@ mod ffi {
     struct DocumentField{
         field_name: String,
         field_value: String,
-        filed_type: String, // "String", "Long", "Int", "Double"
+        field_type: String, // "String", "Long", "Int", "Double"
     }
 
     struct IdDocument{
@@ -55,7 +54,6 @@ pub struct Searcher{
     _index_path: String,
     schema: Schema,
     index_writer: IndexWriter,
-    index_reader: IndexReader
 }
 
 
@@ -65,12 +63,13 @@ pub fn create_searcher(path: &String) -> Result<Box<Searcher>, Box<dyn Error>>{
     let index_path = index_dir;
  
     if index_dir.exists() {
-        //std::fs::remove_dir_all(index_path)?;
+        std::fs::remove_dir_all(index_path)?;
     }
 
     std::fs::create_dir_all(index_path)?;
 
     let mut schema_builder = Schema::builder();
+    schema_builder.add_u64_field("docId", NumericOptions::default() | STORED);
     schema_builder.add_text_field("title", TEXT | STORED);
     schema_builder.add_text_field("body", TEXT);
 
@@ -80,14 +79,8 @@ pub fn create_searcher(path: &String) -> Result<Box<Searcher>, Box<dyn Error>>{
     let mmap_directory = MmapDirectory::open(index_path)?;
     let index = Index::open_or_create(mmap_directory, schema.clone())?;
 
-    let mut index_writer = index.writer(50_000_000)?;
-
-    let mut reader = index
-        .reader_builder()
-        .reload_policy(ReloadPolicy::OnCommit)
-        .try_into()?;
-
-    let searcher = Searcher{_index_path:path.to_string(), schema: schema, index_writer: index_writer, index_reader: reader};
+    let index_writer = index.writer(50_000_000)?;
+    let searcher = Searcher{_index_path:path.to_string(), schema: schema, index_writer: index_writer};
 
     return Ok(Box::new(searcher));
 }
@@ -102,7 +95,13 @@ pub fn add_document(searcher: & mut Searcher, fields:Vec<DocumentField>) -> Resu
     for doc_field in fields{
         let field = searcher.schema.get_field(&doc_field.field_name).unwrap();
         let field_value = doc_field.field_value;
-        old_man_doc.add_text(field, field_value);
+        match doc_field.field_type.as_str() {
+            "String" => old_man_doc.add_text(field, field_value),
+            "Long" => old_man_doc.add_u64(field, field_value.as_str().parse::<u64>()?),
+            "Int" => old_man_doc.add_i64(field, field_value.as_str().parse::<i64>()?),
+            "Double" => old_man_doc.add_f64(field, field_value.as_str().parse::<f64>()?),
+            _ => println!("Not supported Type{}", doc_field.field_type),
+        }
     }    
  
     index_writer.add_document(old_man_doc)?;
@@ -111,7 +110,14 @@ pub fn add_document(searcher: & mut Searcher, fields:Vec<DocumentField>) -> Resu
 }
 
 pub fn search(searcher: & mut Searcher, query: & String) -> Result<Vec<IdDocument>, Box<dyn Error>> {
-    let index_searcher = searcher.index_reader.searcher();
+
+    // FIXME: 不用每次 new 一个 IndexReader
+    let reader = searcher.index_writer.index()
+        .reader_builder()
+        .reload_policy(ReloadPolicy::OnCommit)
+        .try_into()?;
+
+    let index_searcher = reader.searcher();
 
     let title = searcher.schema.get_field("title").unwrap();
     let body = searcher.schema.get_field("body").unwrap();
