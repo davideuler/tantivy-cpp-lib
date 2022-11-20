@@ -119,6 +119,7 @@ pub fn search(searcher: & mut Searcher, query: & String) -> Result<Vec<IdDocumen
 
     let index_searcher = reader.searcher();
 
+    let doc_id_field = searcher.schema.get_field("docId").unwrap();
     let title = searcher.schema.get_field("title").unwrap();
     let body = searcher.schema.get_field("body").unwrap();
 
@@ -133,9 +134,12 @@ pub fn search(searcher: & mut Searcher, query: & String) -> Result<Vec<IdDocumen
         let retrieved_doc = index_searcher.doc(doc_address)?;
         let doc_title = retrieved_doc.get_first(title) ;
 
-        if doc_title.is_some() {
+        let doc_id = retrieved_doc.get_first(doc_id_field) ;
+
+        if doc_title.is_some() && doc_id.is_some() {
             let a = doc_title.expect( "error getting title");
-            let document = IdDocument{docId:123, title: a.as_text().expect("error as_text()").to_string(), score: score };
+            let current_id = doc_id.expect("error getting doc_id").as_u64().expect("as_u64");
+            let document = IdDocument{docId:current_id, title: a.as_text().expect("error as_text()").to_string(), score: score };
             id_documents.push(document);
         }
         
