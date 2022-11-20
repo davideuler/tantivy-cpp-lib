@@ -1,5 +1,6 @@
 //#[macro_use]
 extern crate tantivy;
+use tantivy::IndexReader;
 use tantivy::collector::TopDocs;
 use tantivy::query::QueryParser;
 use tantivy::schema::*;
@@ -54,6 +55,7 @@ pub struct Searcher{
     _index_path: String,
     schema: Schema,
     index_writer: IndexWriter,
+    index_reader: IndexReader,
 }
 
 
@@ -80,7 +82,12 @@ pub fn create_searcher(path: &String) -> Result<Box<Searcher>, Box<dyn Error>>{
     let index = Index::open_or_create(mmap_directory, schema.clone())?;
 
     let index_writer = index.writer(50_000_000)?;
-    let searcher = Searcher{_index_path:path.to_string(), schema: schema, index_writer: index_writer};
+
+    let reader = index_writer.index()
+        .reader_builder()
+        .reload_policy(ReloadPolicy::OnCommit)
+        .try_into()?;
+    let searcher = Searcher{_index_path:path.to_string(), schema: schema, index_writer: index_writer, index_reader: reader};
 
     return Ok(Box::new(searcher));
 }
@@ -88,9 +95,6 @@ pub fn create_searcher(path: &String) -> Result<Box<Searcher>, Box<dyn Error>>{
 pub fn add_document(searcher: & mut Searcher, fields:Vec<DocumentField>) -> Result<(), Box<dyn Error>>{
     let index_writer = &mut searcher.index_writer;
     let mut old_man_doc = Document::default();
-
-    // let title = schema.get_field("title").unwrap();
-    // let body = schema.get_field("body").unwrap();
 
     for doc_field in fields{
         let field = searcher.schema.get_field(&doc_field.field_name).unwrap();
@@ -106,18 +110,16 @@ pub fn add_document(searcher: & mut Searcher, fields:Vec<DocumentField>) -> Resu
  
     index_writer.add_document(old_man_doc)?;
     index_writer.commit()?;
+
+    _ = searcher.index_reader.reload(); // reload reader after commit
     return Ok(());
 }
 
 pub fn search(searcher: & mut Searcher, query: & String) -> Result<Vec<IdDocument>, Box<dyn Error>> {
 
     // FIXME: 不用每次 new 一个 IndexReader
-    let reader = searcher.index_writer.index()
-        .reader_builder()
-        .reload_policy(ReloadPolicy::OnCommit)
-        .try_into()?;
 
-    let index_searcher = reader.searcher();
+    let index_searcher = searcher.index_reader.searcher();
 
     let doc_id_field = searcher.schema.get_field("docId").unwrap();
     let title = searcher.schema.get_field("title").unwrap();
