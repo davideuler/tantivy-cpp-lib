@@ -34,5 +34,11 @@ main()
 
   add_document(*searcher, document);
 
+  rust::Vec<IdDocument> documents = search(*searcher, "sea whale");
+
+  for(IdDocument doc : documents) {
+    std::cout << "id:" <<  doc.docId  << " title:" << doc.title.data() << " " << doc.score << std::endl;
+  } 
+
   return 0;
 }

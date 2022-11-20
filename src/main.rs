@@ -1,6 +1,5 @@
 #[macro_use]
 extern crate tantivy;
-use tantivy::Directory;
 use tantivy::collector::TopDocs;
 use tantivy::query::QueryParser;
 use tantivy::schema::*;
@@ -38,9 +37,9 @@ fn main() -> tantivy::Result<()> {
          he had gone eighty-four days now without taking a fish.",
     );
 
-    index_writer.add_document(old_man_doc);
+    _ = index_writer.add_document(old_man_doc);
 
-    index_writer.add_document(doc!(
+    _ = index_writer.add_document(doc!(
     title => "Of Mice and Men",
     body => "A few miles south of Soledad, the Salinas River drops in close to the hillside \
             bank and runs deep and green. The water is warm too, for it has slipped twinkling \
@@ -52,7 +51,7 @@ fn main() -> tantivy::Result<()> {
             limbs and branches that arch over the pool"
     ));
 
-    index_writer.add_document(doc!(
+    _ = index_writer.add_document(doc!(
     title => "Of Mice and Men",
     body => "A few miles south of Soledad, the Salinas River drops in close to the hillside \
             bank and runs deep and green. The water is warm too, for it has slipped twinkling \
@@ -65,7 +64,7 @@ fn main() -> tantivy::Result<()> {
     ));
 
  
-    index_writer.add_document(doc!(
+    _ = index_writer.add_document(doc!(
     title => "Frankenstein",
     title => "The Modern Prometheus",
     body => "You will rejoice to hear that no disaster has accompanied the commencement of an \

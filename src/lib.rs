@@ -1,4 +1,4 @@
-#[macro_use]
+//#[macro_use]
 extern crate tantivy;
 use tantivy::collector::TopDocs;
 use tantivy::query::QueryParser;
@@ -11,8 +11,10 @@ use tantivy::directory::MmapDirectory;
 
 // include shared struct in Rust
 use crate::ffi::DocumentField;
+use crate::ffi::IdDocument;
 
 use std::error::Error;
+use std::vec;
 
 #[cxx::bridge]
 mod ffi {
@@ -24,12 +26,20 @@ mod ffi {
         filed_type: String, // "String", "Long", "Int", "Double"
     }
 
+    struct IdDocument{
+        docId: u64,
+        title: String,
+        score: f32, // score for matched document 
+    }
+
     extern "Rust" {
         type Searcher;
 
         fn create_searcher(path: &String) -> Result<Box<Searcher>>;
 
         fn add_document(seacher: &mut Searcher, fields:Vec<DocumentField>) -> Result<()>;
+
+        fn search(searcher: & mut Searcher, query: &String) -> Result<Vec<IdDocument>>;
     }
     extern "Rust" {
         fn rust_from_cpp() -> ();
@@ -38,12 +48,11 @@ mod ffi {
 
 pub fn rust_from_cpp() -> () {
     println!("called rust_from_cpp()");
-    
 }
 
 
 pub struct Searcher{
-    index_path: String,
+    _index_path: String,
     schema: Schema,
     index_writer: IndexWriter,
     index_reader: IndexReader
@@ -55,9 +64,11 @@ pub fn create_searcher(path: &String) -> Result<Box<Searcher>, Box<dyn Error>>{
     let index_dir = std::path::Path::new(path);
     let index_path = index_dir;
  
-    if !index_dir.exists() {
-        std::fs::create_dir_all(index_path)?;
+    if index_dir.exists() {
+        //std::fs::remove_dir_all(index_path)?;
     }
+
+    std::fs::create_dir_all(index_path)?;
 
     let mut schema_builder = Schema::builder();
     schema_builder.add_text_field("title", TEXT | STORED);
@@ -71,12 +82,12 @@ pub fn create_searcher(path: &String) -> Result<Box<Searcher>, Box<dyn Error>>{
 
     let mut index_writer = index.writer(50_000_000)?;
 
-    let reader = index
+    let mut reader = index
         .reader_builder()
         .reload_policy(ReloadPolicy::OnCommit)
         .try_into()?;
 
-    let searcher = Searcher{index_path:path.to_string(), schema: schema, index_writer:index_writer, index_reader:reader};
+    let searcher = Searcher{_index_path:path.to_string(), schema: schema, index_writer: index_writer, index_reader: reader};
 
     return Ok(Box::new(searcher));
 }
@@ -99,6 +110,31 @@ pub fn add_document(searcher: & mut Searcher, fields:Vec<DocumentField>) -> Resu
     return Ok(());
 }
 
-pub fn search(seacher: & mut Searcher) -> () {
-    let index_searcher = seacher.index_reader.searcher();
+pub fn search(searcher: & mut Searcher, query: & String) -> Result<Vec<IdDocument>, Box<dyn Error>> {
+    let index_searcher = searcher.index_reader.searcher();
+
+    let title = searcher.schema.get_field("title").unwrap();
+    let body = searcher.schema.get_field("body").unwrap();
+
+    let query_parser = QueryParser::for_index(searcher.index_writer.index(), vec![title, body]);
+    let query = query_parser.parse_query(query)?;
+
+    let top_docs = index_searcher.search(&query, &TopDocs::with_limit(10))?;
+
+    let mut id_documents: Vec<IdDocument> =  Vec::new();
+
+    for (score, doc_address) in top_docs {
+        let retrieved_doc = index_searcher.doc(doc_address)?;
+        let doc_title = retrieved_doc.get_first(title) ;
+
+        if doc_title.is_some() {
+            let a = doc_title.expect( "error getting title");
+            let document = IdDocument{docId:123, title: a.as_text().expect("error as_text()").to_string(), score: score };
+            id_documents.push(document);
+        }
+        
+        println!("{}",  searcher.schema.to_json(&retrieved_doc));
+    }
+
+    return Ok(id_documents);
 }
