@@ -8,6 +8,7 @@ crate-type = ["staticlib"]
 
 [dependencies]
 cxx = "1.0"
+tantivy = "0.18.1"
 
 [build-dependencies]
 cxx-build = "1.0"
