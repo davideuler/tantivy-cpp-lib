@@ -82,13 +82,13 @@ fn main() -> tantivy::Result<()> {
     let searcher = reader.searcher();
 
     let query_parser = QueryParser::for_index(&index, vec![title, body]);
-    let query = query_parser.parse_query("sea whale")?;
+    let query = query_parser.parse_query("sea River")?;
 
     let top_docs = searcher.search(&query, &TopDocs::with_limit(10))?;
 
     for (_score, doc_address) in top_docs {
         let retrieved_doc = searcher.doc(doc_address)?;
-        println!("{}", schema.to_json(&retrieved_doc));
+        println!("score:{} {}", _score, schema.to_json(&retrieved_doc));
     }
 
     Ok(())

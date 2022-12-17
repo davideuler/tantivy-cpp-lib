@@ -18,6 +18,7 @@ use tantivy::directory::MmapDirectory;
 use crate::ffi::DocumentField;
 use crate::ffi::FieldType;
 use crate::ffi::IdDocument;
+use crate::ffi::FieldMapping;
 
 use std::error::Error;
 use std::vec;
@@ -32,8 +33,9 @@ mod ffi {
         long_field = 2,
         float_field = 3,
         double_field = 4,
-        str_field = 5,
+        str_field = 5, // untokenized and indexed
         bool_field = 6,
+        text_field = 7, // tokenized and indexed
     }
 
     struct FieldMapping{
@@ -60,7 +62,7 @@ mod ffi {
     extern "Rust" {
         type Searcher;
 
-        fn create_searcher(path: &String) -> Result<Box<Searcher>>;
+        fn create_searcher(path: &String, field_mappings:Vec<FieldMapping>) -> Result<Box<Searcher>>;
 
         fn add_document(seacher: &mut Searcher, docs:Vec<IdDocument>) -> Result<()>;
 
@@ -91,7 +93,7 @@ pub struct Searcher{
 }
 
 
-pub fn create_searcher(path: &String) -> Result<Box<Searcher>, Box<dyn Error>>{
+pub fn create_searcher(path: &String, field_mappings:Vec<FieldMapping>) -> Result<Box<Searcher>, Box<dyn Error>>{
     
     let index_dir = std::path::Path::new(path);
     let index_path = index_dir;
@@ -107,9 +109,21 @@ pub fn create_searcher(path: &String) -> Result<Box<Searcher>, Box<dyn Error>>{
     let mut schema_builder = Schema::builder();
     
     schema_builder.add_u64_field("docId", NumericOptions::default() | STORED);
-    schema_builder.add_u64_field("documentId", NumericOptions::default() | STORED);
-    schema_builder.add_text_field("title", TEXT | STORED);
-    schema_builder.add_text_field("body", TEXT);
+    for field_mapping in field_mappings {
+
+        let _ = match field_mapping.field_type{
+            FieldType::int_field  => schema_builder.add_u64_field(&field_mapping.field_name, NumericOptions::default() | STORED),
+            FieldType::long_field => schema_builder.add_u64_field(&field_mapping.field_name, NumericOptions::default() | STORED),
+            FieldType::float_field => schema_builder.add_f64_field(&field_mapping.field_name, NumericOptions::default() | STORED),
+            FieldType::double_field => schema_builder.add_u64_field(&field_mapping.field_name, NumericOptions::default() | STORED),
+            FieldType::str_field => schema_builder.add_text_field(&field_mapping.field_name, STRING),
+            FieldType::bool_field => schema_builder.add_bool_field(&field_mapping.field_name, NumericOptions::default() | STORED),
+            FieldType::text_field => schema_builder.add_text_field(&field_mapping.field_name, TEXT | STORED),
+            
+            _ => schema_builder.add_text_field(&field_mapping.field_name, STRING),
+        };
+
+    }
 
     let schema = schema_builder.build();
 
@@ -131,11 +145,12 @@ pub fn create_searcher(path: &String) -> Result<Box<Searcher>, Box<dyn Error>>{
 
 pub fn add_document(searcher: & mut Searcher, docs:Vec<IdDocument>) -> Result<(), Box<dyn Error>>{
     let index_writer = &mut searcher.index_writer;
-    let mut document = Document::default();
-
+    
     let id_field = searcher.schema.get_field("docId").unwrap();
 
     for doc in docs{
+        let mut document = Document::default();
+
         document.add_u64(id_field, doc.docId);
 
         for doc_field in doc.fieldValues{
@@ -151,6 +166,7 @@ pub fn add_document(searcher: & mut Searcher, docs:Vec<IdDocument>) -> Result<()
                         FieldType::double_field => document.add_f64(field, field_value.as_str().parse::<f64>()?),
                         FieldType::str_field => document.add_text(field, field_value),
                         FieldType::bool_field => document.add_field_value(field, field_value),
+                        FieldType::text_field => document.add_text(field, field_value),
                         
                         _ => println!("Not supported FieldType{}", doc_field.field_type.to_string()),
                     };
@@ -159,11 +175,11 @@ pub fn add_document(searcher: & mut Searcher, docs:Vec<IdDocument>) -> Result<()
                     bail!("field {doc_field.field_name} not found! ");  
                 }
             }
-        }   
+        } 
+        
+        index_writer.add_document(document)?;
     }
      
- 
-    index_writer.add_document(document)?;
     index_writer.commit()?;
 
     _ = searcher.index_reader.reload(); // reload reader after commit
@@ -173,15 +189,15 @@ pub fn add_document(searcher: & mut Searcher, docs:Vec<IdDocument>) -> Result<()
 pub fn search(searcher: & mut Searcher, query: & String) -> Result<Vec<IdDocument>, Box<dyn Error>> {
 
     // FIXME: 不用每次 new 一个 IndexReader
-
     let index_searcher = searcher.index_reader.searcher();
+    println!("query:{}", query);
 
     let doc_id_field = searcher.schema.get_field("docId").unwrap();
     let title = searcher.schema.get_field("title").unwrap();
     let body = searcher.schema.get_field("body").unwrap();
 
     let query_parser = QueryParser::for_index(searcher.index_writer.index(), vec![title, body]);
-    let query = query_parser.parse_query(query)?;
+    let query = query_parser.parse_query(query.as_str())?;
 
     let top_docs = index_searcher.search(&query, &TopDocs::with_limit(10))?;
 
@@ -189,9 +205,10 @@ pub fn search(searcher: & mut Searcher, query: & String) -> Result<Vec<IdDocumen
 
     for (_score, doc_address) in top_docs {
         let retrieved_doc = index_searcher.doc(doc_address)?;
-        let doc_title = retrieved_doc.get_first(title) ;
+        println!("score:{} {}", _score, searcher.schema.to_json(&retrieved_doc));
 
         let doc_id = retrieved_doc.get_first(doc_id_field) ;
+        let doc_title = retrieved_doc.get_first(title) ;
 
         if doc_title.is_some() && doc_id.is_some() {
             let a = doc_title.expect( "error getting title");
@@ -202,8 +219,6 @@ pub fn search(searcher: & mut Searcher, query: & String) -> Result<Vec<IdDocumen
             let document = IdDocument{docId:current_id, fieldValues: field_values, score: _score };
             id_documents.push(document);
         }
-        
-        println!("retrieved document: {}",  searcher.schema.to_json(&retrieved_doc));
     }
 
     return Ok(id_documents);
