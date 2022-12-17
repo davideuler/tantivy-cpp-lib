@@ -8,7 +8,6 @@ use tantivy::ReloadPolicy;
 
 use tantivy::directory::MmapDirectory;
 
-
 fn main() -> tantivy::Result<()> {
  
     let index_dir = std::path::Path::new("/tmp/index/").join("tantivy-index"); 

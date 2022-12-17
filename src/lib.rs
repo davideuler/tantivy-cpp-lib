@@ -1,5 +1,10 @@
-//#[macro_use]
+// An attribute to hide warnings for unused code.
+#![allow(dead_code)]
+#[macro_use]
+
+extern crate simple_error;
 extern crate tantivy;
+
 use tantivy::IndexReader;
 use tantivy::collector::TopDocs;
 use tantivy::query::QueryParser;
@@ -11,6 +16,7 @@ use tantivy::directory::MmapDirectory;
 
 // include shared struct in Rust
 use crate::ffi::DocumentField;
+use crate::ffi::FieldType;
 use crate::ffi::IdDocument;
 
 use std::error::Error;
@@ -19,25 +25,44 @@ use std::vec;
 #[cxx::bridge]
 mod ffi {
     
+    #[derive(Debug, Clone, Copy)]
+    enum FieldType {
+        unspecified_field_type = 0,
+        int_field = 1,
+        long_field = 2,
+        float_field = 3,
+        double_field = 4,
+        str_field = 5,
+        bool_field = 6,
+    }
+
+    struct FieldMapping{
+        field_name: String,
+        field_type: FieldType,
+    }
+
     // Shared structs with fields visible to both languages.
     struct DocumentField{
         field_name: String,
         field_value: String,
-        field_type: String, // "String", "Long", "Int", "Double"
+        field_type: FieldType, // "String", "Long", "Int", "Double", "Boolean"
     }
+
 
     struct IdDocument{
         docId: u64,
-        title: String,
+        // title: String,
+        fieldValues: Vec<DocumentField>,
         score: f32, // score for matched document 
     }
 
+    // definition of Rust interface 
     extern "Rust" {
         type Searcher;
 
         fn create_searcher(path: &String) -> Result<Box<Searcher>>;
 
-        fn add_document(seacher: &mut Searcher, fields:Vec<DocumentField>) -> Result<()>;
+        fn add_document(seacher: &mut Searcher, docs:Vec<IdDocument>) -> Result<()>;
 
         fn search(searcher: & mut Searcher, query: &String) -> Result<Vec<IdDocument>>;
     }
@@ -50,6 +75,13 @@ pub fn rust_from_cpp() -> () {
     println!("called rust_from_cpp()");
 }
 
+impl std::fmt::Display for FieldType {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "{:?}", self)
+        // or, alternatively:
+        // fmt::Debug::fmt(self, f)
+    }
+}
 
 pub struct Searcher{
     _index_path: String,
@@ -68,10 +100,14 @@ pub fn create_searcher(path: &String) -> Result<Box<Searcher>, Box<dyn Error>>{
         std::fs::remove_dir_all(index_path)?;
     }
 
+    index_path.to_str().expect("msg");
+    
     std::fs::create_dir_all(index_path)?;
 
     let mut schema_builder = Schema::builder();
+    
     schema_builder.add_u64_field("docId", NumericOptions::default() | STORED);
+    schema_builder.add_u64_field("documentId", NumericOptions::default() | STORED);
     schema_builder.add_text_field("title", TEXT | STORED);
     schema_builder.add_text_field("body", TEXT);
 
@@ -92,23 +128,42 @@ pub fn create_searcher(path: &String) -> Result<Box<Searcher>, Box<dyn Error>>{
     return Ok(Box::new(searcher));
 }
 
-pub fn add_document(searcher: & mut Searcher, fields:Vec<DocumentField>) -> Result<(), Box<dyn Error>>{
-    let index_writer = &mut searcher.index_writer;
-    let mut old_man_doc = Document::default();
 
-    for doc_field in fields{
-        let field = searcher.schema.get_field(&doc_field.field_name).unwrap();
-        let field_value = doc_field.field_value;
-        match doc_field.field_type.as_str() {
-            "String" => old_man_doc.add_text(field, field_value),
-            "Long" => old_man_doc.add_u64(field, field_value.as_str().parse::<u64>()?),
-            "Int" => old_man_doc.add_i64(field, field_value.as_str().parse::<i64>()?),
-            "Double" => old_man_doc.add_f64(field, field_value.as_str().parse::<f64>()?),
-            _ => println!("Not supported Type{}", doc_field.field_type),
-        }
-    }    
+pub fn add_document(searcher: & mut Searcher, docs:Vec<IdDocument>) -> Result<(), Box<dyn Error>>{
+    let index_writer = &mut searcher.index_writer;
+    let mut document = Document::default();
+
+    let id_field = searcher.schema.get_field("docId").unwrap();
+
+    for doc in docs{
+        document.add_u64(id_field, doc.docId);
+
+        for doc_field in doc.fieldValues{
+            let field_option = searcher.schema.get_field(&doc_field.field_name);
+
+            match field_option {
+                Some(field) => {
+                    let field_value = doc_field.field_value;
+                    let _ = match doc_field.field_type {
+                        FieldType::int_field  => document.add_i64(field, field_value.as_str().parse::<i64>()?),
+                        FieldType::long_field => document.add_i64(field, field_value.as_str().parse::<i64>()?),
+                        FieldType::float_field => document.add_f64(field, field_value.as_str().parse::<f64>()?),
+                        FieldType::double_field => document.add_f64(field, field_value.as_str().parse::<f64>()?),
+                        FieldType::str_field => document.add_text(field, field_value),
+                        FieldType::bool_field => document.add_field_value(field, field_value),
+                        
+                        _ => println!("Not supported FieldType{}", doc_field.field_type.to_string()),
+                    };
+                }
+                None => {
+                    bail!("field {doc_field.field_name} not found! ");  
+                }
+            }
+        }   
+    }
+     
  
-    index_writer.add_document(old_man_doc)?;
+    index_writer.add_document(document)?;
     index_writer.commit()?;
 
     _ = searcher.index_reader.reload(); // reload reader after commit
@@ -132,7 +187,7 @@ pub fn search(searcher: & mut Searcher, query: & String) -> Result<Vec<IdDocumen
 
     let mut id_documents: Vec<IdDocument> =  Vec::new();
 
-    for (score, doc_address) in top_docs {
+    for (_score, doc_address) in top_docs {
         let retrieved_doc = index_searcher.doc(doc_address)?;
         let doc_title = retrieved_doc.get_first(title) ;
 
@@ -141,11 +196,14 @@ pub fn search(searcher: & mut Searcher, query: & String) -> Result<Vec<IdDocumen
         if doc_title.is_some() && doc_id.is_some() {
             let a = doc_title.expect( "error getting title");
             let current_id = doc_id.expect("error getting doc_id").as_u64().expect("as_u64");
-            let document = IdDocument{docId:current_id, title: a.as_text().expect("error as_text()").to_string(), score: score };
+            let mut field_values: Vec<DocumentField> = Vec::new();
+            let title_field = DocumentField{field_name: String::from("title"), field_value: a.as_text().expect("error as_text()").to_string(), field_type: FieldType::str_field};
+            field_values.push(title_field);
+            let document = IdDocument{docId:current_id, fieldValues: field_values, score: _score };
             id_documents.push(document);
         }
         
-        println!("{}",  searcher.schema.to_json(&retrieved_doc));
+        println!("retrieved document: {}",  searcher.schema.to_json(&retrieved_doc));
     }
 
     return Ok(id_documents);

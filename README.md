@@ -12,7 +12,7 @@ cargo build
 ```
 g++ -std=c++17 -o index_program src/main.cpp \
       -I .. -I target/cxxbridge \
-      -L target/debug -l arustlib \
+      -L target/debug -l tantivy-cpp-lib \
       -pthread -l dl
 ```
 
