@@ -5,6 +5,8 @@
 extern crate simple_error;
 extern crate tantivy;
 
+use std::ops::{Bound};
+
 use tantivy::IndexReader;
 use tantivy::collector::TopDocs;
 use tantivy::query::QueryParser;
@@ -13,15 +15,21 @@ use tantivy::Index;
 use tantivy::ReloadPolicy;
 use tantivy::IndexWriter;
 use tantivy::directory::MmapDirectory;
+use tantivy::query::{BooleanQuery, Occur, RangeQuery, Query, TermQuery};
 
 // include shared struct in Rust
 use crate::ffi::DocumentField;
 use crate::ffi::FieldType;
 use crate::ffi::IdDocument;
 use crate::ffi::FieldMapping;
+use crate::ffi::TOccur;
+use crate::ffi::SearchParam;
+use crate::ffi::RangeBound;
+use crate::ffi::StringBound;
+use crate::ffi::FloatBound;
+use crate::ffi::LongBound;
 
 use std::error::Error;
-use std::vec;
 
 #[cxx::bridge]
 mod ffi {
@@ -50,12 +58,69 @@ mod ffi {
         field_type: FieldType, // "String", "Long", "Int", "Double", "Boolean"
     }
 
+    struct SearchParam{
+        topK: usize,
+    }
+
+    #[derive(Debug, Clone, Copy)]
+    enum RangeBound {
+        /// An inclusive bound.
+        Included,
+
+        /// An exclusive bound.
+        Excluded,
+
+        /// An infinite endpoint. Indicates that there is no bound in this direction.
+        Unbounded,
+    }
+
+    struct StringBound{
+        bound: RangeBound,
+        value: String,
+    }
+
+    struct FloatBound{
+        bound:RangeBound,
+        value:f64,
+    }
+
+    struct LongBound{
+        bound:RangeBound,
+        value:i64,
+    }
 
     struct IdDocument{
-        docId: u64,
+        docId: i64,
         // title: String,
         fieldValues: Vec<DocumentField>,
         score: f32, // score for matched document 
+    }
+
+    /// Defines whether a term in a query must be present,
+    /// should be present or must not be present.
+    #[derive(Debug, Clone, Copy)]
+    pub enum TOccur {
+        /// For a given document to be considered for scoring,
+        /// at least one of the terms with the Should or the Must
+        /// Occur constraint must be within the document.
+        Should,
+        /// Document without the term are excluded from the search.
+        Must,
+        /// Document that contain the term are excluded from the
+        /// search.
+        MustNot,
+    }
+    
+    extern "Rust" {
+        type TQuery;
+
+        type TQueryOccur;
+
+        type TQueryOccurVec;
+
+        fn query_occur_vec() -> Box<TQueryOccurVec>;
+
+        fn append_query_occur_to_vec(occurs_vec: & mut TQueryOccurVec, query_occur: & mut TQueryOccur);
     }
 
     // definition of Rust interface 
@@ -64,9 +129,29 @@ mod ffi {
 
         fn create_searcher(path: &String, field_mappings:Vec<FieldMapping>) -> Result<Box<Searcher>>;
 
-        fn add_document(seacher: &mut Searcher, docs:Vec<IdDocument>) -> Result<()>;
+        fn add_document(searcher: &mut Searcher, docs:Vec<IdDocument>, commit: bool) -> Result<()>;
 
-        fn search(searcher: & mut Searcher, query: &String) -> Result<Vec<IdDocument>>;
+        fn search(searcher: & mut Searcher, query: &String, search_fields: & Vec<String>, search_param: & SearchParam) -> Result<Vec<IdDocument>>;
+
+        pub fn search_by_query(searcher: & mut Searcher, query: & TQuery, search_param: & SearchParam) -> Result<Vec<IdDocument>>;
+
+        fn term_query(searcher: &mut Searcher, field_name: &String, field_value: &String) -> Box<TQuery>;
+
+        fn term_query_long(searcher: &mut Searcher, field_name: &String, field_value: i64) -> Box<TQuery>;
+
+        fn range_query(searcher: &mut Searcher, field_name: &String, from_value: &StringBound, to_value: &StringBound) -> Box<TQuery>;
+
+        fn range_query_float(searcher: &mut Searcher, field_name: &String, from_value: &FloatBound, to_value: &FloatBound) -> Box<TQuery> ;
+
+        fn range_query_long(searcher: &mut Searcher, field_name: &String, from_value: &LongBound, to_value: &LongBound) -> Box<TQuery>;
+     
+        fn query_occurr(occurr: & TOccur, query: & mut TQuery) -> Box<TQueryOccur>;
+
+        fn boolean_query(queries: & TQueryOccurVec ) -> Box<TQuery> ;
+        
+        fn delete_document(searcher: &mut Searcher, doc_ids:Vec<i64>, commit: bool) -> Result<()>;
+
+        pub fn commit_index(searcher: &mut Searcher)  -> Result<()>;
     }
     extern "Rust" {
         fn rust_from_cpp() -> ();
@@ -92,6 +177,145 @@ pub struct Searcher{
     index_reader: IndexReader,
 }
 
+#[derive(Debug)]
+pub struct TQuery{
+    query: Box<dyn Query>,
+}
+
+#[derive(Debug)]
+pub struct TQueryOccur{
+    occur: TOccur,
+    query: Box<dyn Query>,
+}
+
+pub struct TQueryOccurVec {
+    occurs: Vec<TQueryOccur>,
+}
+
+pub fn term_query(searcher: &mut Searcher, field_name: &String, field_value: &String) -> Box<TQuery> {
+    let field = searcher.schema.get_field(field_name).unwrap();
+    let tq = TQuery{ query: Box::new( TermQuery::new(
+        Term::from_field_text(field, field_value),
+        IndexRecordOption::Basic,
+    ))};
+
+    return Box::new(tq);
+}
+
+pub fn term_query_long(searcher: &mut Searcher, field_name: &String, field_value: i64) -> Box<TQuery> {
+    let field = searcher.schema.get_field(field_name).unwrap();
+    let tq = TQuery{ query: Box::new( TermQuery::new(
+        Term::from_field_i64(field, field_value),
+        IndexRecordOption::Basic,
+    ))};
+
+    return Box::new(tq);
+}
+
+pub fn range_query(searcher: &mut Searcher, field_name: &String, from_value: &StringBound, to_value: &StringBound) -> Box<TQuery> {
+    let field = searcher.schema.get_field(field_name).unwrap();
+    //let left: Bound<&str> = Bound::Included(&from_value.value);
+    
+    let left: Bound<&str> = match from_value.bound{
+        RangeBound::Included => Bound::Included(&from_value.value),
+        RangeBound::Excluded => Bound::Excluded(&from_value.value),
+        _ => Bound::Unbounded,
+    };
+
+    let right: Bound<&str> = match to_value.bound{
+        RangeBound::Included => Bound::Included(&to_value.value),
+        RangeBound::Excluded => Bound::Excluded(&to_value.value),
+        _ => Bound::Unbounded,
+    };
+    
+    let tq = TQuery{ query: Box::new(
+        // RangeQuery::new_str(field, &from_value.value..&to_value.value)
+        RangeQuery::new_str_bounds(field, left, right)
+     )};
+
+    return Box::new(tq);
+}
+
+pub fn range_query_float(searcher: &mut Searcher, field_name: &String, from_value: &FloatBound, to_value: &FloatBound) -> Box<TQuery> {
+    let field = searcher.schema.get_field(field_name).unwrap();
+
+    let left: Bound<f64> = match from_value.bound{
+        RangeBound::Included => Bound::Included(from_value.value),
+        RangeBound::Excluded => Bound::Excluded(from_value.value),
+        _ => Bound::Unbounded,
+    };
+
+    let right: Bound<f64> = match to_value.bound{
+        RangeBound::Included => Bound::Included(to_value.value),
+        RangeBound::Excluded => Bound::Excluded(to_value.value),
+        _ => Bound::Unbounded,
+    };
+
+    let tq = TQuery{ query: Box::new(
+        // RangeQuery::new_f64(field, from_value.value..to_value.value)
+        RangeQuery::new_f64_bounds(field, left, right)
+     )};
+
+    return Box::new(tq);
+}
+
+pub fn range_query_long(searcher: &mut Searcher, field_name: &String, from_value: &LongBound, to_value: &LongBound) -> Box<TQuery> {
+    let field = searcher.schema.get_field(field_name).unwrap();
+
+    let left: Bound<i64> = match from_value.bound{
+        RangeBound::Included => Bound::Included(from_value.value),
+        RangeBound::Excluded => Bound::Excluded(from_value.value),
+        _ => Bound::Unbounded,
+    };
+
+    let right: Bound<i64> = match to_value.bound{
+        RangeBound::Included => Bound::Included(to_value.value),
+        RangeBound::Excluded => Bound::Excluded(to_value.value),
+        _ => Bound::Unbounded,
+    };
+
+
+    let tq = TQuery{ query: Box::new(
+        // RangeQuery::new_i64(field, from_value.value..to_value.value)
+        RangeQuery::new_i64_bounds(field, left, right)
+     )};
+
+    return Box::new(tq);
+}
+
+
+pub fn boolean_query(queries: & TQueryOccurVec ) -> Box<TQuery> {
+    let mut queries_with_occur: Vec<(Occur, Box<dyn Query>)> = Vec::new();
+
+    for query in & queries.occurs {
+        match query.occur{
+            TOccur::Must => queries_with_occur.push((Occur::Must, query.query.box_clone())),
+            TOccur::MustNot => queries_with_occur.push((Occur::MustNot, query.query.box_clone())),
+            TOccur::Should => queries_with_occur.push((Occur::Should, query.query.box_clone())),
+            _ => println!("Not supported occur!"),
+        }
+    }
+
+    let tq = TQuery{ query: Box::new(BooleanQuery::new(queries_with_occur))};
+
+    return Box::new(tq);
+}
+
+pub fn query_occurr(occurr: & TOccur, tquery: & mut TQuery) -> Box<TQueryOccur> {
+    let query_occur = TQueryOccur{occur: *occurr, query: tquery.query.box_clone()};
+    return Box::new(query_occur);
+}
+
+pub fn query_occur_vec() -> Box<TQueryOccurVec>{
+    return Box::new(TQueryOccurVec{occurs: Vec::new()});
+}
+
+
+pub fn append_query_occur_to_vec(occurs_vec: & mut TQueryOccurVec, query_occur: & mut TQueryOccur) {
+    let t = TQueryOccur{occur: query_occur.occur, query: query_occur.query.box_clone()};
+    occurs_vec.occurs.push(t);
+}
+
 
 pub fn create_searcher(path: &String, field_mappings:Vec<FieldMapping>) -> Result<Box<Searcher>, Box<dyn Error>>{
     
@@ -108,16 +332,17 @@ pub fn create_searcher(path: &String, field_mappings:Vec<FieldMapping>) -> Resul
 
     let mut schema_builder = Schema::builder();
     
-    schema_builder.add_u64_field("docId", NumericOptions::default() | STORED);
+    // set the _docId to be INDEXED for query & delete
+    schema_builder.add_i64_field("_docId", NumericOptions::default() | STORED | INDEXED);
     for field_mapping in field_mappings {
 
         let _ = match field_mapping.field_type{
-            FieldType::int_field  => schema_builder.add_u64_field(&field_mapping.field_name, NumericOptions::default() | STORED),
-            FieldType::long_field => schema_builder.add_u64_field(&field_mapping.field_name, NumericOptions::default() | STORED),
-            FieldType::float_field => schema_builder.add_f64_field(&field_mapping.field_name, NumericOptions::default() | STORED),
-            FieldType::double_field => schema_builder.add_u64_field(&field_mapping.field_name, NumericOptions::default() | STORED),
+            FieldType::int_field  => schema_builder.add_i64_field(&field_mapping.field_name, NumericOptions::default() | STORED | INDEXED),
+            FieldType::long_field => schema_builder.add_i64_field(&field_mapping.field_name, NumericOptions::default() | STORED | INDEXED),
+            FieldType::float_field => schema_builder.add_f64_field(&field_mapping.field_name, NumericOptions::default() | STORED | INDEXED ),
+            FieldType::double_field => schema_builder.add_f64_field(&field_mapping.field_name, NumericOptions::default() | STORED | INDEXED),
             FieldType::str_field => schema_builder.add_text_field(&field_mapping.field_name, STRING),
-            FieldType::bool_field => schema_builder.add_bool_field(&field_mapping.field_name, NumericOptions::default() | STORED),
+            FieldType::bool_field => schema_builder.add_bool_field(&field_mapping.field_name, STORED | INDEXED),
             FieldType::text_field => schema_builder.add_text_field(&field_mapping.field_name, TEXT | STORED),
             
             _ => schema_builder.add_text_field(&field_mapping.field_name, STRING),
@@ -143,15 +368,15 @@ pub fn create_searcher(path: &String, field_mappings:Vec<FieldMapping>) -> Resul
 }
 
 
-pub fn add_document(searcher: & mut Searcher, docs:Vec<IdDocument>) -> Result<(), Box<dyn Error>>{
+pub fn add_document(searcher: & mut Searcher, docs:Vec<IdDocument>, commit: bool) -> Result<(), Box<dyn Error>>{
     let index_writer = &mut searcher.index_writer;
     
-    let id_field = searcher.schema.get_field("docId").unwrap();
+    let id_field = searcher.schema.get_field("_docId").unwrap();
 
     for doc in docs{
         let mut document = Document::default();
 
-        document.add_u64(id_field, doc.docId);
+        document.add_i64(id_field, doc.docId);
 
         for doc_field in doc.fieldValues{
             let field_option = searcher.schema.get_field(&doc_field.field_name);
@@ -165,7 +390,8 @@ pub fn add_document(searcher: & mut Searcher, docs:Vec<IdDocument>) -> Result<()
                         FieldType::float_field => document.add_f64(field, field_value.as_str().parse::<f64>()?),
                         FieldType::double_field => document.add_f64(field, field_value.as_str().parse::<f64>()?),
                         FieldType::str_field => document.add_text(field, field_value),
-                        FieldType::bool_field => document.add_field_value(field, field_value),
+                        //field_value should be "true", "false"
+                        FieldType::bool_field => document.add_bool(field, field_value.to_lowercase().as_str().parse::<bool>()?),
                         FieldType::text_field => document.add_text(field, field_value),
                         
                         _ => println!("Not supported FieldType{}", doc_field.field_type.to_string()),
@@ -180,26 +406,70 @@ pub fn add_document(searcher: & mut Searcher, docs:Vec<IdDocument>) -> Result<()
         index_writer.add_document(document)?;
     }
      
-    index_writer.commit()?;
-
-    _ = searcher.index_reader.reload(); // reload reader after commit
+    if commit {
+        index_writer.commit()?;
+        _ = searcher.index_reader.reload(); // reload reader after commit
+    }
+    
     return Ok(());
 }
 
-pub fn search(searcher: & mut Searcher, query: & String) -> Result<Vec<IdDocument>, Box<dyn Error>> {
+pub fn delete_document(searcher: &mut Searcher, doc_ids:Vec<i64>, commit: bool) -> Result<(), Box<dyn Error>> {
 
-    // FIXME: 不用每次 new 一个 IndexReader
+    println!("delete doc_ids:{:?}", doc_ids);
+
+    let id_field = searcher.schema.get_field("_docId").unwrap();
+
+    let index_writer = &mut searcher.index_writer;
+
+    for doc_id in doc_ids {
+        let term = Term::from_field_i64(id_field, doc_id);
+        index_writer.delete_term(term);
+    }
+    
+    if commit {
+        index_writer.commit()?;
+        _ = searcher.index_reader.reload(); // reload reader after commit
+    }
+
+    return Ok(());
+}
+
+pub fn commit_index(searcher: &mut Searcher)  -> Result<(), Box<dyn Error>> {
+    let index_writer = &mut searcher.index_writer;
+
+    index_writer.commit()?;
+    _ = searcher.index_reader.reload(); // reload reader after commit
+
+    return Ok(());
+}
+
+pub fn search(searcher: & mut Searcher, query: & String, search_fields: & Vec<String>, search_param: & SearchParam) -> Result<Vec<IdDocument>, Box<dyn Error>> {
+
     let index_searcher = searcher.index_reader.searcher();
     println!("query:{}", query);
 
-    let doc_id_field = searcher.schema.get_field("docId").unwrap();
-    let title = searcher.schema.get_field("title").unwrap();
-    let body = searcher.schema.get_field("body").unwrap();
+    let doc_id_field = searcher.schema.get_field("_docId").unwrap();
 
-    let query_parser = QueryParser::for_index(searcher.index_writer.index(), vec![title, body]);
+    let mut fields: Vec<Field> = Vec::new();
+
+    for search_field in search_fields{
+        let field_option = searcher.schema.get_field(search_field.as_str());
+
+        match field_option {
+            Some(field) => {
+                fields.push(field);
+            }
+            None => {
+                bail!("field {search_field} not found! ");  
+            }
+        }
+    }
+
+    let query_parser = QueryParser::for_index(searcher.index_writer.index(), fields);
     let query = query_parser.parse_query(query.as_str())?;
 
-    let top_docs = index_searcher.search(&query, &TopDocs::with_limit(10))?;
+    let top_docs = index_searcher.search(&query, &TopDocs::with_limit(search_param.topK))?;    
 
     let mut id_documents: Vec<IdDocument> =  Vec::new();
 
@@ -208,15 +478,35 @@ pub fn search(searcher: & mut Searcher, query: & String) -> Result<Vec<IdDocumen
         println!("score:{} {}", _score, searcher.schema.to_json(&retrieved_doc));
 
         let doc_id = retrieved_doc.get_first(doc_id_field) ;
-        let doc_title = retrieved_doc.get_first(title) ;
+    
+        if doc_id.is_some() {
+            let current_id = doc_id.expect("error getting doc_id").as_i64().expect("as_i64");
+            let document = IdDocument{docId:current_id, fieldValues: Vec::new(), score: _score };
+            id_documents.push(document);
+        }
+    }
 
-        if doc_title.is_some() && doc_id.is_some() {
-            let a = doc_title.expect( "error getting title");
-            let current_id = doc_id.expect("error getting doc_id").as_u64().expect("as_u64");
-            let mut field_values: Vec<DocumentField> = Vec::new();
-            let title_field = DocumentField{field_name: String::from("title"), field_value: a.as_text().expect("error as_text()").to_string(), field_type: FieldType::str_field};
-            field_values.push(title_field);
-            let document = IdDocument{docId:current_id, fieldValues: field_values, score: _score };
+    return Ok(id_documents);
+}
+
+pub fn search_by_query(searcher: & mut Searcher, query: & TQuery, search_param: & SearchParam) -> Result<Vec<IdDocument>, Box<dyn Error>> {
+    let index_searcher = searcher.index_reader.searcher();
+    //println!("query:{}", query);
+
+    let doc_id_field = searcher.schema.get_field("_docId").unwrap();
+    let top_docs = index_searcher.search(&query.query, &TopDocs::with_limit(search_param.topK))?;    
+
+    let mut id_documents: Vec<IdDocument> =  Vec::new();
+
+    for (_score, doc_address) in top_docs {
+        let retrieved_doc = index_searcher.doc(doc_address)?;
+        println!("score:{} {}", _score, searcher.schema.to_json(&retrieved_doc));
+
+        let doc_id = retrieved_doc.get_first(doc_id_field) ;
+    
+        if doc_id.is_some() {
+            let current_id = doc_id.expect("error getting doc_id").as_i64().expect("as_i64");
+            let document = IdDocument{docId:current_id, fieldValues: Vec::new(), score: _score };
             id_documents.push(document);
         }
     }
