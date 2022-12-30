@@ -65,13 +65,77 @@ main()
   docs.push_back(IdDocument{2002, document2});
   docs.push_back(IdDocument{2003, document3});
 
-  add_document(*searcher, docs);
+  add_document(*searcher, docs, true);
 
-  rust::Vec<IdDocument> documents = search(*searcher, "sea task");
+  rust::Vec<rust::String> search_fields = {"title", "body"};
+  
+  ::SearchParam search_param = SearchParam{20};
+
+  rust::Vec<IdDocument> documents = search(*searcher, "sea task", search_fields, search_param);
+  
 
   for(IdDocument doc : documents) {
-    std::cout << "id:" <<  doc.docId  << " field_value:" << doc.fieldValues[0].field_value.c_str() << " " << doc.score << std::endl;
+    std::cout << "id:" <<  doc.docId  << " score:" << doc.score << std::endl;
   } 
 
-  return 0;
+  std::cout << "====== Start Term Query \r\n" << std::endl;
+  std:: cout << "search by term query: title = 'computing' " << std::endl;
+  rust::Box<TQuery> query = term_query(*searcher, "title", "computing");
+
+  rust::Vec<IdDocument> documents2 = search_by_query(*searcher, *query, search_param);
+  
+
+  for(IdDocument doc : documents2) {
+    std::cout << "id:" <<  doc.docId  << " score:" << doc.score << std::endl;
+  } 
+
+
+  std::cout << "====== Start Range Query (Long), id >= 1002 \r\n" << std::endl;
+
+  LongBound left = LongBound{RangeBound::Included, 1002};
+  LongBound right = LongBound{RangeBound::Unbounded, 0};
+  
+  rust::Box<TQuery> rquery = range_query_long(*searcher, "_docId", left, right);
+  rust::Vec<IdDocument> docs_of_range = search_by_query(*searcher, *rquery, search_param);
+  for(IdDocument doc : docs_of_range) {
+    std::cout << "id:" <<  doc.docId  << " score:" << doc.score << std::endl;
+  } 
+
+  std::cout << "====== Start Range Query (String), title >= 'The' \r\n" << std::endl;
+  StringBound sleft = StringBound{RangeBound::Included, "the"};
+  StringBound sright = StringBound{RangeBound::Unbounded, ""};
+  
+  rust::Box<TQuery> sr_query = range_query(*searcher, "title", sleft, sright);
+  rust::Vec<IdDocument> docs_of_range_query = search_by_query(*searcher, *sr_query, search_param);
+  
+
+  for(IdDocument doc : docs_of_range_query) {
+    std::cout << "id:" <<  doc.docId  << " score:" << doc.score << std::endl;
+  } 
+
+
+  std::cout << "====== Start delete and Boolean Query \r\n" << std::endl;
+  rust::Vec<::std::int64_t> doc_ids = {1001};
+  delete_document(*searcher, doc_ids, true);
+  commit_index(*searcher);
+
+  std:: cout << "search by boolean query: title = 'computing' OR body = 'stream' " << std::endl;
+  rust::Box<TQuery> term_query1 = term_query(*searcher, "title", "computing");
+  rust::Box<TQuery> term_query2 = term_query(*searcher, "body", "stream");
+  
+  rust::Box<::TQueryOccurVec>  queries_with_occur = query_occur_vec();
+  
+  rust::Box<TQueryOccur> occurr1 = query_occurr(TOccur::Should, *term_query1);
+  rust::Box<TQueryOccur> occurr2 = query_occurr(TOccur::Should, *term_query2);
+  append_query_occur_to_vec(*queries_with_occur, *occurr1);
+  append_query_occur_to_vec(*queries_with_occur, *occurr2);
+
+
+  rust::Box<TQuery> bo_query = boolean_query(*queries_with_occur);
+
+  rust::Vec<IdDocument> documents3 = search_by_query(*searcher, *bo_query, search_param);
+  
+  for(IdDocument doc : documents3) {
+    std::cout << "id:" <<  doc.docId  << " score:" << doc.score << std::endl;
+  } 
 }
