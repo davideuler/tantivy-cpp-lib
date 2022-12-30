@@ -2,7 +2,7 @@ if (POLICY CMP0048)
   cmake_policy(SET CMP0048 NEW)
 endif ()
 
-project(tantivy_indexer_lib)
+project(tantivy_cpp_lib)
 
 cmake_minimum_required(VERSION 3.15)
 
@@ -20,15 +20,15 @@ if(ENABLE_LTO)
     set(RUST_FLAGS "-Clinker-plugin-lto" "-Clinker=clang-13" "-Clink-arg=-fuse-ld=lld-13")
 endif()
 
-set(TANTIVY_INDEXER_LIB "${CMAKE_CURRENT_BINARY_DIR}/${TARGET_DIR}/libtantivy_indexer_lib.a")
+set(TANTIVY_INDEXER_LIB "${CMAKE_CURRENT_BINARY_DIR}/${TARGET_DIR}/libtantivy_cpp_lib.a")
 
 set(RUST_PART_CXX "${CMAKE_CURRENT_BINARY_DIR}/tantivy_indexer.cpp")
 add_library(tantivy_indexer STATIC ${RUST_PART_CXX})
 add_custom_command(
     OUTPUT ${RUST_PART_CXX}
     COMMAND CARGO_TARGET_DIR=${CMAKE_CURRENT_BINARY_DIR} RUSTFLAGS="${RUST_FLAGS}" ${CARGO_CMD}
-    COMMAND cp ${CMAKE_CURRENT_BINARY_DIR}/cxxbridge/tantivy-indexer-lib/src/lib.rs.cc ${RUST_PART_CXX}
-    COMMAND cp ${CMAKE_CURRENT_BINARY_DIR}/cxxbridge/tantivy-indexer-lib/src/lib.rs.h ${CMAKE_CURRENT_BINARY_DIR}/tantivy_indexer.h
+    COMMAND cp ${CMAKE_CURRENT_BINARY_DIR}/cxxbridge/tantivy-cpp-lib/src/lib.rs.cc ${RUST_PART_CXX}
+    COMMAND cp ${CMAKE_CURRENT_BINARY_DIR}/cxxbridge/tantivy-cpp-lib/src/lib.rs.h ${CMAKE_CURRENT_BINARY_DIR}/tantivy_indexer.h
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
