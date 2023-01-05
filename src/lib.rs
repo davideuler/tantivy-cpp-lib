@@ -4,8 +4,10 @@
 
 extern crate simple_error;
 extern crate tantivy;
+extern crate roaring;
 
 use std::ops::{Bound};
+use roaring::RoaringTreemap;
 
 use tantivy::IndexReader;
 use tantivy::collector::TopDocs;
@@ -126,8 +128,16 @@ mod ffi {
     // definition of Rust interface 
     extern "Rust" {
         type Searcher;
+        
+        type SearchResultBitmap;
 
         fn create_searcher(path: &String, field_mappings:Vec<FieldMapping>) -> Result<Box<Searcher>>;
+        
+        fn search_compact_all(searcher: & mut Searcher, query: & TQuery) -> Result<Box<SearchResultBitmap>>;
+        
+        fn num_docs(searcher: & mut Searcher) -> Result<u64>;
+
+        fn is_member(result_map: & mut SearchResultBitmap, doc_id: u64) -> Result<bool>;
 
         fn add_document(searcher: &mut Searcher, docs:Vec<IdDocument>, commit: bool) -> Result<()>;
 
@@ -175,6 +185,10 @@ pub struct Searcher{
     schema: Schema,
     index_writer: IndexWriter,
     index_reader: IndexReader,
+}
+
+pub struct SearchResultBitmap{
+    bitmap:  RoaringTreemap,
 }
 
 #[derive(Debug)]
@@ -513,3 +527,38 @@ pub fn search_by_query(searcher: & mut Searcher, query: & TQuery, search_param: 
 
     return Ok(id_documents);
 }
+
+pub fn num_docs(searcher: & mut Searcher) -> Result<u64, Box<dyn Error>> {
+    return Ok(searcher.index_reader.searcher().num_docs());   
+}
+
+pub fn search_compact_all(searcher: & mut Searcher, query: & TQuery) -> Result<Box<SearchResultBitmap>, Box<dyn Error>>{
+    
+    let index_searcher = searcher.index_reader.searcher();
+    //println!("query:{}", query);
+
+    let doc_id_field = searcher.schema.get_field("_docId").unwrap();
+    let collector = DocSetCollector{};
+    let top_docs = index_searcher.search(&query.query, & collector)?;    
+
+    let mut bitmap = RoaringTreemap::new();
+
+    for doc_address in top_docs {
+        let retrieved_doc = index_searcher.doc(doc_address)?;
+        // println!("score:{} {}", _score, searcher.schema.to_json(&retrieved_doc));
+
+        let doc_id = retrieved_doc.get_first(doc_id_field) ;
+    
+        if doc_id.is_some() {
+            let current_id = doc_id.expect("error getting doc_id").as_i64().expect("as_i64");
+            bitmap.insert(current_id.unsigned_abs());
+        }
+    }
+
+    return Ok(Box::new(SearchResultBitmap { bitmap }));
+}
+
+pub fn is_member(result_map: & mut SearchResultBitmap, doc_id: u64) -> Result<bool, Box<dyn Error>> {
+    Ok(result_map.bitmap.contains(doc_id))
+}
+
