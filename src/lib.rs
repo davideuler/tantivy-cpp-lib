@@ -10,7 +10,7 @@ use std::ops::{Bound};
 use roaring::RoaringTreemap;
 
 use tantivy::IndexReader;
-use tantivy::collector::TopDocs;
+use tantivy::collector::{TopDocs, DocSetCollector};
 use tantivy::query::QueryParser;
 use tantivy::schema::*;
 use tantivy::Index;
