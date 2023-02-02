@@ -13,6 +13,8 @@ simple-error = "0.1.9"
 strum = "0.24"
 strum_macros = "0.24"
 roaring = "0.10.1"
+log = "0.4.17"
+simple-logging = "2.0.2"
 
 [build-dependencies]
 cxx-build = "1.0"
