@@ -32,6 +32,7 @@ use crate::ffi::IdDocument;
 use crate::ffi::FieldMapping;
 use crate::ffi::TOccur;
 use crate::ffi::SearchParam;
+use crate::ffi::IndexParam;
 use crate::ffi::RangeBound;
 use crate::ffi::StringBound;
 use crate::ffi::FloatBound;
