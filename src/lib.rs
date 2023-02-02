@@ -70,6 +70,10 @@ mod ffi {
     struct SearchParam{
         topK: usize,
     }
+    
+    struct IndexParam{
+        memory_mbytes: usize,
+    }
 
     #[derive(Debug, Clone, Copy)]
     enum RangeBound {
@@ -522,7 +526,7 @@ pub fn commit_index(searcher: &mut Searcher)  -> Result<(), Box<dyn Error>> {
 pub fn search(searcher: & mut Searcher, query: & String, search_fields: & Vec<String>, search_param: & SearchParam) -> Result<Vec<IdDocument>, Box<dyn Error>> {
 
     let index_searcher = searcher.index_reader.searcher();
-    log::info!!("query:{}", query);
+    log::info!("query:{}", query);
 
     let doc_id_field = searcher.schema.get_field("_docId").unwrap();
 
