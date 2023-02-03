@@ -18,6 +18,7 @@ simple-logging = "2.0.2"
 serde = { version = "1.0.136", features = ["derive"] }
 serde_json = "1.0.79"
 fastfield_codecs = "0.3.1"
+futures = "0.3.21"
 
 [build-dependencies]
 cxx-build = "1.0"

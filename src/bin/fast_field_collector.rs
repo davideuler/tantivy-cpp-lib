@@ -9,6 +9,7 @@
 
 use std::sync::Arc;
 use std::time::Instant;
+use futures::executor::block_on;
 
 use roaring::RoaringTreemap;
 
@@ -17,8 +18,8 @@ use roaring::RoaringTreemap;
 use tantivy::collector::{Collector, SegmentCollector};
 use tantivy::directory::MmapDirectory;
 use tantivy::fastfield::Column;
-use tantivy::query::{QueryParser, RangeQuery, AllQuery, TermQuery};
-use tantivy::schema::{Field, Schema, FAST, INDEXED, TEXT, IndexRecordOption};
+use tantivy::query::TermQuery;
+use tantivy::schema::{Schema, FAST, INDEXED, TEXT, IndexRecordOption};
 use tantivy::{doc, Index, Score, SegmentReader, Term};
 
 #[derive(Default)]
@@ -38,7 +39,7 @@ struct FastFieldCollector {
 
 impl FastFieldCollector {
     fn with_field(field: String) -> FastFieldCollector {
-        FastFieldCollector { field }
+        FastFieldCollector { field: field}
     }
 }
 
@@ -55,6 +56,7 @@ impl Collector for FastFieldCollector {
         segment_reader: &SegmentReader,
     ) -> tantivy::Result<FastFieldSegmentCollector> {
         let fast_field_reader = segment_reader.fast_fields().i64(self.field.as_str())?;
+        
         Ok(FastFieldSegmentCollector {
             fast_field_reader,
             stats: Stats::default(),
@@ -108,6 +110,7 @@ fn main() -> tantivy::Result<()> {
     let schema = schema_builder.build();
 
     let index_path = std::path::Path::new("/tmp/collector_benchmark/");
+    let mut create_new = false;
     if !index_path.exists() {
         std::fs::create_dir_all(index_path)?;
 
@@ -151,6 +154,9 @@ fn main() -> tantivy::Result<()> {
         }
     
         index_writer.commit()?;
+        index_writer.wait_merging_threads()?; // wait merging threads for later merging of all segments
+        create_new = true;
+        
         println!("done creating index...");
     }
     
@@ -159,6 +165,13 @@ fn main() -> tantivy::Result<()> {
     // let index = Index::open_in_dir(&index_path)?;
     let mmap_directory = MmapDirectory::open(index_path)?;
     let index = Index::open(mmap_directory)?;
+
+    if create_new {
+        // merge all segments:
+        let mut index_writer = index.writer(50_000_000)?;
+        let segment_ids = index.searchable_segment_ids()?;
+        block_on(index_writer.merge(&segment_ids))?;
+    }
 
     let reader = index.reader()?;
     let searcher = reader.searcher();

@@ -32,13 +32,10 @@ fn main() -> tantivy::Result<()> {
     let doc_id_field = schema.get_field("_docId").unwrap();
     // let stock_field = schema.get_field("stock").unwrap();
 
-    schema.get_field_entry(doc_id_field)
-
     let index_searcher = index.reader()?.searcher();
-
     let right: Bound<i64> = Bound::Unbounded;
     let left: Bound<i64> = Bound::Excluded(1);
-    let range_query = RangeQuery::new_i64_bounds(doc_id_field, left, right);
+    let range_query = RangeQuery::new_i64_bounds(String::from("_docId"), left, right);
     
     println!("doing query:{:?}", range_query);
 
