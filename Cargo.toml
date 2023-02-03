@@ -8,13 +8,16 @@ crate-type = ["staticlib"]
 
 [dependencies]
 cxx = "1.0"
-tantivy = "0.19.0"
+tantivy = { git = "https://github.com/quickwit-oss/tantivy", rev = "0f20787917833"}
 simple-error = "0.1.9"
 strum = "0.24"
 strum_macros = "0.24"
 roaring = "0.10.1"
 log = "0.4.17"
 simple-logging = "2.0.2"
+serde = { version = "1.0.136", features = ["derive"] }
+serde_json = "1.0.79"
+fastfield_codecs = "0.3.1"
 
 [build-dependencies]
 cxx-build = "1.0"
