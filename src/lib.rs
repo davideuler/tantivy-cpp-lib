@@ -232,7 +232,7 @@ pub struct TQueryOccurVec {
 pub fn term_query(searcher: &mut Searcher, field_name: &String, field_value: &String) -> Result<Box<TQuery>, Box<dyn Error>> {
     let field_option = searcher.schema.get_field(field_name);
 
-    if field_option.is_none(){
+    if field_option.is_err(){
         bail!(format!("field {field_name} not found! "));
     }
 
@@ -249,7 +249,7 @@ pub fn term_query(searcher: &mut Searcher, field_name: &String, field_value: &St
 pub fn term_query_long(searcher: &mut Searcher, field_name: &String, field_value: i64) -> Result<Box<TQuery>, Box<dyn Error>> {
     let field_option = searcher.schema.get_field(field_name);
 
-    if field_option.is_none(){
+    if field_option.is_err(){
         bail!(format!("field {field_name} not found! "));
     }
 
@@ -266,7 +266,7 @@ pub fn term_query_long(searcher: &mut Searcher, field_name: &String, field_value
 pub fn range_query(searcher: &mut Searcher, field_name: &String, from_value: &StringBound, to_value: &StringBound) -> Result<Box<TQuery>, Box<dyn Error>> {
     let field_option = searcher.schema.get_field(field_name);
 
-    if field_option.is_none(){
+    if field_option.is_err(){
         bail!(format!("field {field_name} not found! "));
     }
 
@@ -288,7 +288,7 @@ pub fn range_query(searcher: &mut Searcher, field_name: &String, from_value: &St
 
     let tq = TQuery{ query: Box::new(
         // RangeQuery::new_str(field, &from_value.value..&to_value.value)
-        RangeQuery::new_str_bounds(field, left, right)
+        RangeQuery::new_str_bounds(field_name.clone(), left, right)
      )};
 
     return Ok(Box::new(tq));
@@ -297,7 +297,7 @@ pub fn range_query(searcher: &mut Searcher, field_name: &String, from_value: &St
 pub fn range_query_float(searcher: &mut Searcher, field_name: &String, from_value: &FloatBound, to_value: &FloatBound) -> Result<Box<TQuery>, Box<dyn Error>> {
     let field_option = searcher.schema.get_field(field_name);
 
-    if field_option.is_none(){
+    if field_option.is_err(){
         bail!(format!("field {field_name} not found! "));
     }
 
@@ -317,7 +317,7 @@ pub fn range_query_float(searcher: &mut Searcher, field_name: &String, from_valu
 
     let tq = TQuery{ query: Box::new(
         // RangeQuery::new_f64(field, from_value.value..to_value.value)
-        RangeQuery::new_f64_bounds(field, left, right)
+        RangeQuery::new_f64_bounds(field_name.clone(), left, right)
      )};
 
     return Ok(Box::new(tq));
@@ -326,7 +326,7 @@ pub fn range_query_float(searcher: &mut Searcher, field_name: &String, from_valu
 pub fn range_query_long(searcher: &mut Searcher, field_name: &String, from_value: &LongBound, to_value: &LongBound) -> Result<Box<TQuery>, Box<dyn Error>> {
     let field_option = searcher.schema.get_field(field_name);
 
-    if field_option.is_none(){
+    if field_option.is_err(){
         bail!(format!("field {field_name} not found! "));
     }
 
@@ -347,7 +347,7 @@ pub fn range_query_long(searcher: &mut Searcher, field_name: &String, from_value
 
     let tq = TQuery{ query: Box::new(
         // RangeQuery::new_i64(field, from_value.value..to_value.value)
-        RangeQuery::new_i64_bounds(field, left, right)
+        RangeQuery::new_i64_bounds(field_name.clone(), left, right)
      )};
 
     return Ok(Box::new(tq));
@@ -462,7 +462,7 @@ pub fn add_document(searcher: & mut Searcher, docs:Vec<IdDocument>, commit: bool
             let field_option = searcher.schema.get_field(&doc_field.field_name);
 
             match field_option {
-                Some(field) => {
+                Ok(field) => {
                     let field_value = doc_field.field_value;
                     let _ = match doc_field.field_type {
                         FieldType::int_field  => document.add_i64(field, field_value.as_str().parse::<i64>()?),
@@ -477,7 +477,7 @@ pub fn add_document(searcher: & mut Searcher, docs:Vec<IdDocument>, commit: bool
                         _ => log::warn!("Not supported FieldType {}", doc_field.field_type.to_string()),
                     };
                 }
-                None => {
+                Err(err) => {
                     bail!(format!("field {} not found! ", doc_field.field_name));
                 }
             }
@@ -537,10 +537,10 @@ pub fn search(searcher: & mut Searcher, query: & String, search_fields: & Vec<St
         let field_option = searcher.schema.get_field(search_field.as_str());
 
         match field_option {
-            Some(field) => {
+            Ok(field) => {
                 fields.push(field);
             }
-            None => {
+            Err(err) => {
                 bail!(format!("field {search_field} not found! "));
             }
         }
@@ -616,17 +616,20 @@ pub fn search_compact_all(searcher: & mut Searcher, query: & TQuery) -> Result<B
     for doc_address in top_docs {
         // cache doc_id_reader by segment_ord,
         let segment_id = doc_address.segment_ord.clone();
-        if seg_id_readers.contains_key(&segment_id){
-            let doc_id_reader = seg_id_readers.get(&segment_id);
-
-            let doc_id = doc_id_reader.unwrap().get_val(doc_address.doc_id);
-            bitmap.insert(doc_id.unsigned_abs());
-        }else {
-            let segment_reader = index_searcher.segment_reader(segment_id);
-            let doc_id_reader = segment_reader.fast_fields().i64(doc_id_field).unwrap();
-            let doc_id = doc_id_reader.get_val(doc_address.doc_id);
-            seg_id_readers.insert(segment_id, doc_id_reader);
-            bitmap.insert(doc_id.unsigned_abs());
+        
+        let doc_id_reader_option = seg_id_readers.get(&segment_id);
+        match doc_id_reader_option {
+            Some(doc_id_reader) => {
+                let doc_id = doc_id_reader.get_val(doc_address.doc_id);
+                bitmap.insert(doc_id.unsigned_abs());
+            }
+            None => {
+                let segment_reader = index_searcher.segment_reader(segment_id);
+                let doc_id_reader = segment_reader.fast_fields().i64("_docId").unwrap();
+                let doc_id = doc_id_reader.get_val(doc_address.doc_id);
+                seg_id_readers.insert(segment_id, doc_id_reader);
+                bitmap.insert(doc_id.unsigned_abs());
+            }
         }
         
     }
