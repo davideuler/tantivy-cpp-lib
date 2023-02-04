@@ -1,15 +1,12 @@
 use std::collections::HashSet;
 
-use tantivy::collector::{DocSetCollector};
-
-use tantivy::collector::{TopDocs, FilterCollector};
 use tantivy::collector::{Collector, SegmentCollector};
 use tantivy::{DocAddress, DocId, Score};
 
 
-/// Collectors that returns the set of DocAddress that matches the query.
+/// Collectors that ignores the set of DocAddress that matches the query.
 ///
-/// This collector is mostly useful for tests.
+/// This collector is a DocSetCollector without collecting docs
 pub struct FastDocCollector;
 
 impl Collector for FastDocCollector {

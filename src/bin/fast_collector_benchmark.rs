@@ -1,5 +1,9 @@
 #![allow(dead_code)]
-#[macro_use]
+
+// It benchmark FastDocCollector, and FilterCollector on index with 1 million data, for RangeQuery
+// The index is created by running fast_field_collector as: cargo run --release --bin fast_field_collector
+// The FastDocCollector is a collector which has the same logic as DocSetCollector without collecting docs,
+//    so it is faster than DocSetCollector. FastDocCollector is defined in fast.rs module.
 extern crate tantivy;
 
 
@@ -9,13 +13,10 @@ use std::ops::Bound;
 
 use tantivy::Index;
 use tantivy::directory::MmapDirectory;
-use tantivy::collector::{DocSetCollector};
-
 use tantivy::collector::{TopDocs, FilterCollector};
-use tantivy::DocAddress;
- 
-use tantivy::query::{BooleanQuery, Occur, RangeQuery, Query, TermQuery};
-use tantivy::schema::{NumericOptions, Cardinality};
+use tantivy::DocAddress; 
+use tantivy::query::RangeQuery;
+
 
 use crate::fast::FastDocCollector;
 
@@ -23,14 +24,13 @@ pub mod fast;
 
 fn main() -> tantivy::Result<()> {
  
-    let index_path = std::path::Path::new("/tmp/tantivy.35EB0731");
+    let index_path = std::path::Path::new("/tmp/collector_benchmark/");
 
     let mmap_directory = MmapDirectory::open(index_path)?;
     let index = Index::open(mmap_directory)?;
 
-    let schema = index.schema(); 
-    let doc_id_field = schema.get_field("_docId").unwrap();
-    // let stock_field = schema.get_field("stock").unwrap();
+    // let schema = index.schema(); 
+    // let doc_id_field = schema.get_field("_docId").unwrap();
 
     let index_searcher = index.reader()?.searcher();
     let right: Bound<i64> = Bound::Unbounded;
@@ -39,10 +39,12 @@ fn main() -> tantivy::Result<()> {
     
     println!("doing query:{:?}", range_query);
 
+    // Test on FastDocCollector
     do_query(&index_searcher, & range_query)?;
-    do_filter_query(&index_searcher, & range_query)?;
+    do_query(&index_searcher, & range_query)?;
 
-    do_query(&index_searcher, & range_query)?;
+    // Test on FilterCollector
+    do_filter_query(&index_searcher, & range_query)?;
     do_filter_query(&index_searcher, & range_query)?;
 
     return Ok(());
@@ -58,12 +60,6 @@ fn do_query(index_searcher: & tantivy::Searcher, range_query: & RangeQuery) -> R
 
 fn do_filter_query(index_searcher: & tantivy::Searcher, range_query: & RangeQuery) -> Result<(), tantivy::TantivyError> {
     let start = Instant::now();
-   
-    
-    let score_options = NumericOptions::default()
-            .set_indexed()
-            .set_fieldnorm()
-            .set_fast(Cardinality::SingleValue);
 
     let schema = index_searcher.index().schema();
     let doc_id_field = schema.get_field("_docId").unwrap();

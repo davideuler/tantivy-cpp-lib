@@ -1,5 +1,7 @@
 // # Custom collector example
 //
+// It benchmark customized Collector on index with 1 million data, for RangeQuery
+// 
 // This example shows how you can implement your own
 // collector. As an example, we will compute a collector
 // that computes the standard deviation of a given fast field.
@@ -132,7 +134,7 @@ fn main() -> tantivy::Result<()> {
     let price = schema_builder.add_u64_field("price", INDEXED | FAST);
     let schema = schema_builder.build();
 
-    let index_path = std::path::Path::new("/tmp/collector_benchmark/");
+    let index_path = std::path::Path::new("/tmp/collector_benchmark_u64/");
     if !index_path.exists() {
         std::fs::create_dir_all(index_path)?;
 
